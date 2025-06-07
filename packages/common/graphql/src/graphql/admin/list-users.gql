@@ -1,4 +1,4 @@
-query listUsers($filter: ListUserInput!) {
+query admin_users_list($filter: ListUserInput!) {
   users(filter: $filter) {
     id
     name

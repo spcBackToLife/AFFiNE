@@ -1,4 +1,4 @@
-query getPrompts {
+query copilot_prompts {
   listCopilotPrompts {
     name
     model

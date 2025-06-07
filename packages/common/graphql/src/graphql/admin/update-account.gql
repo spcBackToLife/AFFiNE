@@ -1,4 +1,4 @@
-mutation updateAccount($id: String!, $input: ManageUserInput!) {
+mutation admin_users_update($id: String!, $input: ManageUserInput!) {
   updateUser(id: $id, input: $input) {
     id
     name

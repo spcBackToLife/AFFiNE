@@ -1,4 +1,4 @@
-mutation sendTestEmail($host: String!, $port: Int!, $sender: String!, $username: String!, $password: String!, $ignoreTLS: Boolean!) {
+mutation admin_send_test_email($host: String!, $port: Int!, $sender: String!, $username: String!, $password: String!, $ignoreTLS: Boolean!) {
   sendTestEmail(config: {
     host: $host,
     port: $port,

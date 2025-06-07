@@ -45,7 +45,7 @@ export const usePrompt = () => {
   );
 
   return {
-    prompts: data.listCopilotPrompts,
+    prompts: data ? (data.listCopilotPrompts || data) : [],
     updatePrompt,
   };
 };

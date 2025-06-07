@@ -1,4 +1,4 @@
-query getUserByEmail($email: String!) {
+query admin_users_get_by_email($email: String!) {
   userByEmail(email: $email) {
     id
     name
