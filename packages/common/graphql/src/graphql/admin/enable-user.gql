@@ -1,4 +1,4 @@
-mutation enableUser($id: String!) {
+mutation admin_users_enable($id: String!) {
   enableUser(id: $id) {
     email
     disabled

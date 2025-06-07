@@ -1,4 +1,4 @@
-mutation updatePrompt(
+mutation update_copilot_prompt(
   $name: String!
   $messages: [CopilotPromptMessageInput!]!
 ) {

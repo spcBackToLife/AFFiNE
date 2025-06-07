@@ -1,4 +1,4 @@
-mutation deleteUser($id: String!) {
+mutation admin_users_delete($id: String!) {
   deleteUser(id: $id) {
     success
   }

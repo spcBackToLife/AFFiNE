@@ -1,4 +1,4 @@
-mutation createUser($input: CreateUserInput!) {
+mutation admin_users_create($input: CreateUserInput!) {
   createUser(input: $input) {
     id
   }

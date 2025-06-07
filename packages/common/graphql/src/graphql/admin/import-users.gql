@@ -1,4 +1,4 @@
-mutation ImportUsers($input: ImportUsersInput!) {
+mutation admin_users_import($input: ImportUsersInput!) {
   importUsers(input: $input) {
     __typename
     ... on UserType {
