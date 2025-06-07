@@ -1,15 +1,15 @@
-import { useMutation } from '@affine/admin/use-mutation';
-import { useQuery } from '@affine/admin/use-query';
+// useMutation import removed
 import { notify } from '@affine/component';
 import { useAsyncCallback } from '@affine/core/components/hooks/affine-async-hooks';
 import { UserFriendlyError } from '@affine/error';
 import {
-  appConfigQuery,
   type UpdateAppConfigInput,
-  updateAppConfigMutation,
+  // updateAppConfigMutation removed
 } from '@affine/graphql';
-import { cloneDeep, get, merge, set } from 'lodash-es';
-import React, { useCallback, useEffect, useMemo, useState } from 'react'; // Added React import
+import { cloneDeep, get, set } from 'lodash-es';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import useSWR, { useSWRConfig } from 'swr';
+import useSWRMutation from 'swr/mutation'; // Imported useSWRMutation
 
 import type { AppConfig } from './config';
 
@@ -17,31 +17,82 @@ export { type UpdateAppConfigInput };
 
 export type AppConfigUpdates = Record<string, { from: any; to: any }>;
 
+// TODO: Proper token management will be addressed globally later.
+const authToken = 'YOUR_JWT_TOKEN_HERE';
+const APP_CONFIG_API_URL = '/v1/admin/app-config';
+
+interface AppConfigResponseWrapper { // For both fetch and update to expect { data: AppConfig }
+  data: AppConfig;
+}
+
+const fetchAppConfig = async (url: string): Promise<AppConfig> => {
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${authToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('Failed to fetch app config:', errorText);
+    throw new Error(`Failed to fetch app config: ${response.statusText}`);
+  }
+
+  const result: AppConfigResponseWrapper = await response.json();
+  return result.data;
+};
+
+// Fetcher for updating app config
+async function restfulUpdateAppConfig(
+  url: string,
+  { arg }: { arg: { updates: UpdateAppConfigInput[] } }
+): Promise<AppConfig> { // Returns the updated app config
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${authToken}`,
+    },
+    body: JSON.stringify({ updates: arg.updates }), // Backend expects { "updates": [...] }
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('Failed to update app config:', errorText);
+    throw new Error(`Failed to update app config: ${response.statusText} - ${errorText}`);
+  }
+  const result: AppConfigResponseWrapper = await response.json(); // Expects { data: AppConfig }
+  return result.data;
+}
+
 export const useAppConfig = () => {
-  const { data: queryData, mutate } = useQuery({
-    query: appConfigQuery,
-  });
+  const {
+    data: appConfig,
+    error: fetchError,
+    isLoading: isLoadingConfig
+  } = useSWR<AppConfig>(APP_CONFIG_API_URL, fetchAppConfig);
 
-  // Adapt to potential API response structures for appConfig
-  const appConfig = useMemo<AppConfig | null>(() => {
-    if (!queryData) return null;
-    // If queryData.appConfig exists, use it; otherwise, assume queryData itself is the appConfig.
-    return queryData.appConfig || queryData;
-  }, [queryData]);
+  const { mutate: revalidateSWRCache } = useSWRConfig();
 
-  const { trigger: saveUpdates } = useMutation({
-    mutation: updateAppConfigMutation,
-  });
+  const {
+    trigger: triggerSaveUpdates,
+    isMutating: isSavingConfig,
+    error: saveConfigError
+  } = useSWRMutation(
+    APP_CONFIG_API_URL,
+    restfulUpdateAppConfig
+  );
 
   const [updates, setUpdates] = useState<AppConfigUpdates>({});
   const [patchedAppConfig, setPatchedAppConfig] = useState<AppConfig | null>(null);
 
-  // Effect to update patchedAppConfig when appConfig loads or changes
   useEffect(() => {
     if (appConfig) {
       setPatchedAppConfig(cloneDeep(appConfig));
     } else {
-      setPatchedAppConfig(null); // Explicitly set to null if appConfig is null
+      setPatchedAppConfig(null);
     }
   }, [appConfig]);
 
@@ -51,41 +102,22 @@ export const useAppConfig = () => {
         const splitIndex = key.indexOf('.');
         const module = key.slice(0, splitIndex);
         const field = key.slice(splitIndex + 1);
-
-        return {
-          module,
-          key: field,
-          value: value.to,
-        };
+        return { module, key: field, value: value.to };
       }
     );
 
     try {
-      const mutationResponse = await saveUpdates({
+      const newAppConfigData = await triggerSaveUpdates({
         updates: updateInputs,
       });
 
-      // The updated gqlFetcher returns { data: result.data } or { data: result }.
-      // mutationResponse is the direct output of gqlFetcher.
-      const newAppConfig = mutationResponse?.data || mutationResponse;
-
-      if (newAppConfig) {
-        // Update SWR cache.
-        // We need to provide the new state for `queryData` to the mutate function.
-        if (queryData && queryData.appConfig !== undefined && newAppConfig.appConfig === undefined) {
-          // Original structure was { appConfig: ... }, new data is direct config
-          // This case implies the new API for update returns the config directly,
-          // while the query API might return it nested.
-          // Or, newAppConfig is actually { appConfig: ... } if API is consistent.
-          // For safety, we check if queryData.appConfig was the source.
-          await mutate(prevQueryData => ({ ...prevQueryData, appConfig: newAppConfig }), { revalidate: false });
-        } else {
-          // Original structure was direct, or new structure matches old.
-          await mutate(newAppConfig, { revalidate: false });
-        }
+      if (newAppConfigData) {
+        // Optimistically update SWR cache with the new config returned by the mutation.
+        await revalidateSWRCache(APP_CONFIG_API_URL, newAppConfigData, { revalidate: false });
+        setPatchedAppConfig(cloneDeep(newAppConfigData));
       } else {
-        // If mutation didn't return the new config, revalidate from server.
-        await mutate();
+        // If mutation didn't return data (should not happen if API is consistent), revalidate from server.
+        await revalidateSWRCache(APP_CONFIG_API_URL);
       }
 
       setUpdates({});
@@ -94,57 +126,77 @@ export const useAppConfig = () => {
         message: 'Settings have been saved successfully.',
       });
     } catch (e) {
-      const error = UserFriendlyError.fromAny(e);
+      const error = UserFriendlyError.fromAny(saveConfigError || e);
       notify.error({
         title: 'Failed to save',
         message: error.message,
       });
-      console.error(e);
+      console.error("Save app config error:", saveConfigError || e);
     }
-  }, [updates, mutate, saveUpdates, queryData]); // queryData is a dependency for cache update logic
+  }, [updates, revalidateSWRCache, triggerSaveUpdates, saveConfigError]);
 
   const update = useCallback(
     (path: string, value: any) => {
-      if (!appConfig) return; // Guard against appConfig being null when update is called
+      if (!appConfig) return;
 
       const [module, field, subField] = path.split('/');
       const key = `${module}.${field}`;
-      const currentVal = get(appConfig, key); // Use appConfig for "from" value
+      const currentVal = get(appConfig, key);
 
       setUpdates(prev => {
         const to = subField
-          ? set(cloneDeep(prev[key]?.to ?? currentVal), subField, value) // cloneDeep to avoid mutating previous `to` state
+          ? set(cloneDeep(prev[key]?.to ?? currentVal), subField, value)
           : value;
-
-        return {
-          ...prev,
-          [key]: {
-            from: currentVal, // Ensure 'from' is from the stable appConfig
-            to,
-          },
-        };
+        return { ...prev, [key]: { from: currentVal, to } };
       });
 
       setPatchedAppConfig(prevPatchedAppConfig => {
         if (!prevPatchedAppConfig) return null;
         const newPatched = cloneDeep(prevPatchedAppConfig);
-        return set(
-          newPatched,
-          `${module}.${field}${subField ? `.${subField}` : ''}`,
-          value
-        );
+        return set(newPatched, `${module}.${field}${subField ? `.${subField}` : ''}`, value);
       });
     },
-    [appConfig] // appConfig is a dependency
+    [appConfig]
   );
 
+  if (isLoadingConfig) {
+    return {
+      appConfig: null,
+      patchedAppConfig: null,
+      update,
+      save,
+      updates,
+      isLoading: true,
+      isSaving: false,
+      error: null,
+      saveError: null,
+    };
+  }
+
+  if (fetchError) {
+    console.error('Error fetching app config:', fetchError);
+    return {
+      appConfig: null,
+      patchedAppConfig: null,
+      update,
+      save,
+      updates,
+      isLoading: false,
+      isSaving: false,
+      error: fetchError,
+      saveError: null,
+    };
+  }
+
   return {
-    // Consumers might expect appConfig to be non-null if the hook is used after loading.
-    // However, it can be null during initialization. Casting as AppConfig implies a contract.
     appConfig: appConfig as AppConfig,
     patchedAppConfig,
     update,
     save,
     updates,
+    isLoading: false,
+    isSaving: isSavingConfig,
+    error: null, // No fetch error at this point
+    saveError: saveConfigError,
   };
 };

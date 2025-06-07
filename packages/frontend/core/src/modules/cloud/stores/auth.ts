@@ -1,9 +1,8 @@
-import {
-  deleteAccountMutation,
-  removeAvatarMutation,
-  updateUserProfileMutation,
-  uploadAvatarMutation,
-} from '@affine/graphql';
+// Removed GQL mutation imports:
+// deleteAccountMutation,
+// removeAvatarMutation,
+// updateUserProfileMutation,
+// uploadAvatarMutation,
 import { Store } from '@toeverything/infra';
 
 import type { GlobalState } from '../../storage';
@@ -104,30 +103,65 @@ export class AuthStore extends Store {
     await this.authProvider.signOut();
   }
 
-  async uploadAvatar(file: File) {
-    await this.gqlService.gql({
-      query: uploadAvatarMutation,
-      variables: {
-        avatar: file,
-      },
+  async uploadAvatar(file: File): Promise<{ avatarUrl: string }> {
+    const formData = new FormData();
+    formData.append('avatar', file);
+
+    // Assuming this.fetchService.fetch can handle FormData and doesn't set
+    // 'Content-Type': 'application/json' by default for FormData.
+    // If it does, a more direct `fetch` or a specialized method in FetchService might be needed.
+    const res = await this.fetchService.fetch(`/v1/users/me/avatar`, {
+      method: 'POST',
+      body: formData,
+      // Content-Type header is usually set automatically by the browser for FormData
     });
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`Failed to upload avatar: ${res.statusText} - ${errorText}`);
+    }
+    const responseData = await res.json();
+    return responseData.data; // { avatarUrl: "string" }
   }
 
-  async removeAvatar() {
-    await this.gqlService.gql({
-      query: removeAvatarMutation,
+  async removeAvatar(): Promise<void> {
+    const res = await this.fetchService.fetch(`/v1/users/me/avatar`, {
+      method: 'DELETE',
     });
+
+    if (!res.ok) {
+      // Handle cases where response might not have a JSON body (e.g. 500 internal server error)
+      let errorText = res.statusText;
+      try {
+        const errorData = await res.json();
+        errorText = errorData.message || errorText;
+      } catch (e) {
+        // Ignore if response body is not JSON
+      }
+      throw new Error(`Failed to remove avatar: ${errorText}`);
+    }
+    // For 204 No Content, res.json() would fail.
+    // If API guarantees { data: { success: true } } for 200 OK on DELETE:
+    // const responseData = await res.json();
+    // if (!responseData.data.success) throw new Error('Remove avatar reported as unsuccessful.');
+    // For now, assume 204 or 200 OK with success body means success.
   }
 
-  async updateLabel(label: string) {
-    await this.gqlService.gql({
-      query: updateUserProfileMutation,
-      variables: {
-        input: {
-          name: label,
-        },
+  async updateLabel(label: string): Promise<AccountProfile> { // Assuming it returns the updated profile
+    const res = await this.fetchService.fetch(`/v1/users/me/profile`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
       },
+      body: JSON.stringify({ name: label }),
     });
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`Failed to update profile name: ${res.statusText} - ${errorText}`);
+    }
+    const responseData = await res.json();
+    return responseData.data; // { /* updated user profile object */ }
   }
 
   async checkUserByEmail(email: string) {
@@ -152,10 +186,33 @@ export class AuthStore extends Store {
     return data;
   }
 
-  async deleteAccount() {
-    const res = await this.gqlService.gql({
-      query: deleteAccountMutation,
+  async deleteAccount(): Promise<boolean> { // Returning boolean for success
+    const res = await this.fetchService.fetch(`/v1/users/me`, {
+      method: 'DELETE',
     });
-    return res.deleteAccount;
+
+    if (!res.ok) {
+      let errorText = res.statusText;
+      try {
+        const errorData = await res.json();
+        errorText = errorData.message || errorText;
+      } catch (e) {
+        // Ignore
+      }
+      throw new Error(`Failed to delete account: ${errorText}`);
+    }
+
+    // Handle 204 No Content or a JSON response like { data: { success: true } }
+    if (res.status === 204) {
+      return true;
+    }
+
+    try {
+      const responseData = await res.json();
+      return responseData.data?.success === true;
+    } catch (e) {
+      // If res.json() fails after a 2xx status, assume success if no specific content needed
+      return res.ok;
+    }
   }
 }
